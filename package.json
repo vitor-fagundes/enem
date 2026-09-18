@@ -1,0 +1,24 @@
+{
+  "name": "enem-rei",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @enem-rei/web",
+    "build": "npm run build --workspace @enem-rei/web",
+    "start": "npm run start --workspace @enem-rei/web",
+    "lint": "npm run lint --workspace @enem-rei/web",
+    "typecheck": "npm run typecheck --workspace @enem-rei/web",
+    "test": "npm run test --workspace @enem-rei/web",
+    "test:e2e": "npm run test:e2e --workspace @enem-rei/web",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "3.9.6"
+  }
+}

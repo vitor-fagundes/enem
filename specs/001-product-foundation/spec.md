@@ -10,7 +10,7 @@
 
 ## Migration Provenance
 
-Este artefato foi reconstruído retrospectivamente durante a migração para o GitHub Spec Kit. Ele expressa no formato atual o Product Foundation originalmente registrado em `specs/001-product-goal.md`; não representa uma nova feature, não declara requisitos como já implementados e não autoriza implementação neste incremento. O documento legado permanece preservado como fonte histórica da migração.
+Este artefato foi reconstruído retrospectivamente durante a migração para o GitHub Spec Kit. Ele expressa no formato atual o Product Foundation originalmente registrado em `specs/001-product-goal.md`; não representa uma nova feature, não declara requisitos como já implementados e não autoriza implementação neste incremento. O Product Foundation define as capacidades pretendidas do produto; cada capacidade será implementada por meio de especificações de feature menores e incrementais. O documento legado permanece preservado como fonte histórica da migração.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -41,9 +41,10 @@ Como estudante, quero resolver questões, corrigir minhas respostas, diagnostica
 **Acceptance Scenarios**:
 
 1. **Given** uma questão selecionada, **When** o usuário responde, **Then** ficam registrados a questão, a resposta, o horário, a duração e, se informado, o nível de confiança.
-2. **Given** uma tentativa concluída, **When** ocorre a correção, **Then** o produto informa acerto ou erro e a alternativa correta.
-3. **Given** uma resposta incorreta, **When** o usuário registra o diagnóstico, **Then** pode associar uma ou mais causas permitidas, com no máximo uma causa primária.
-4. **Given** um erro diagnosticado, **When** o ciclo continua, **Then** o produto pode oferecer explicação curta, conteúdo específico, questões semelhantes ou revisão futura e atualiza o histórico correspondente.
+2. **Given** uma tentativa concluída com gabarito oficial válido e aplicável, **When** ocorre a correção, **Then** o produto informa acerto ou erro e a alternativa correta.
+3. **Given** uma tentativa concluída associada a questão anulada ou com gabarito não resolvido, **When** ocorre a correção, **Then** o produto respeita a situação oficial do gabarito e não trata a tentativa como erro do usuário.
+4. **Given** uma resposta incorreta, **When** o usuário registra o diagnóstico, **Then** pode associar uma ou mais causas permitidas, com no máximo uma causa primária.
+5. **Given** um erro diagnosticado, **When** o ciclo continua, **Then** o produto pode oferecer explicação curta, conteúdo específico, questões semelhantes ou revisão futura e atualiza o histórico correspondente.
 
 ---
 
@@ -92,7 +93,7 @@ Como estudante, quero configurar minha meta de ingresso e acompanhar observaçõ
 
 ### Scope Boundaries
 
-Esta especificação define a fundação funcional do produto de apoio à decisão de estudo para um único usuário e preserva capacidades futuras descritas no legado. A presente migração produz somente documentação: não implementa essas capacidades e não altera o estado atual descrito no README.
+Esta especificação define as capacidades pretendidas do produto de apoio à decisão de estudo para um único usuário, a serem implementadas por meio de especificações de feature subsequentes, e preserva capacidades futuras descritas no legado. A presente migração produz somente documentação: não implementa essas capacidades e não altera o estado atual descrito no README.
 
 Estão fora do MVP: cobertura integral do currículo, substituição de professor, previsão exata de nota TRI, redações para memorização, múltiplos usuários, marketplace, recursos sociais, ranking, chat, assinatura, pagamentos, aplicativo móvel nativo, gamificação complexa, múltiplos vestibulares, múltiplas instituições e complexidade técnica sem caso de uso demonstrado. Isso inclui arquitetura distribuída, processamento de grande escala, mensageria distribuída, busca vetorial e agentes autônomos enquanto não houver necessidade comprovada. O subsistema de redação também fica fora do primeiro incremento funcional.
 
@@ -110,7 +111,7 @@ Estão fora do MVP: cobertura integral do currículo, substituição de professo
 - **FR-010**: A meta estratégica MUST ser apresentada como margem operacional de planejamento, MUST NOT ser tratada como garantia de aprovação e MUST poder ser reavaliada quando surgirem novos dados oficiais.
 - **FR-011**: Notas históricas de ingresso MUST NOT ser fixadas como regra permanente e MUST ser observações temporais associadas a edição, curso, instituição, modalidade, chamada, data e fonte.
 - **FR-012**: Ao registrar uma tentativa, o produto MUST guardar a questão, a resposta, o horário e a duração; a confiança MAY ser registrada opcionalmente.
-- **FR-013**: A correção MUST determinar acerto ou erro e a alternativa correta.
+- **FR-013**: Quando existir gabarito oficial válido e aplicável, a correção MUST determinar acerto ou erro e a alternativa correta. Para questões anuladas ou com gabarito não resolvido, a tentativa MUST ser preservada, mas MUST NOT ser classificada como acerto ou erro e MUST NOT ser contabilizada como erro do usuário.
 - **FR-014**: Uma resposta incorreta MUST poder receber uma ou mais causas dentre `KNOWLEDGE`, `INTERPRETATION`, `CALCULATION`, `ATTENTION`, `TIME`, `GUESS`, `METHOD` e `UNKNOWN`, com no máximo uma causa primária.
 - **FR-015**: A remediação de um erro MAY recomendar explicação curta, conteúdo específico, questões semelhantes ou revisão futura.
 - **FR-016**: Após cada tentativa, o produto MUST atualizar o histórico, o desempenho agregado por área e tópico, o domínio estimado, a prioridade dos tópicos e a fila de revisão.
@@ -128,7 +129,12 @@ Estão fora do MVP: cobertura integral do currículo, substituição de professo
 - **FR-028**: Transformações e cálculos MUST ser reproduzíveis; dados externos MUST ser auditáveis; regras de negócio MUST ser testáveis separadamente da interface; e o produto MUST permanecer simples e local-first, sem exigir processamento distribuído no cenário inicial.
 - **FR-029**: Credenciais, tokens e chaves de acesso MUST NOT ser registrados no repositório nem em dados versionados.
 - **FR-030**: Uma capacidade MUST ser adiada quando não houver probabilidade razoável de melhorar a preparação para o ENEM antes da prova; em conflitos entre sofisticação técnica e velocidade de aprendizado, a velocidade de aprendizado MUST prevalecer.
-- **FR-031**: O futuro subsistema de redação MUST representar redação, avaliação, pontuações C1–C5 separadas e revisão, mas MUST permanecer fora do primeiro incremento funcional.
+
+### Deferred Capabilities
+
+As capacidades abaixo fazem parte da visão do produto, mas estão explicitamente fora do primeiro incremento funcional. Serão especificadas em features próprias.
+
+- **DC-001** *(originalmente FR-031)*: O futuro subsistema de redação MUST representar redação, avaliação, pontuações separadas por competência (C1–C5) e revisão. Este subsistema permanece fora do primeiro incremento funcional.
 
 ### Requirement Acceptance Traceability
 
@@ -136,11 +142,11 @@ Estão fora do MVP: cobertura integral do currículo, substituição de professo
 |-------------|---------------------|
 | FR-001–FR-007 | User Story 1 scenarios 1–3; deterministic repetition and recommendation provenance review |
 | FR-008–FR-011 | User Story 4 scenarios 1–3; single-user scope inspection |
-| FR-012–FR-016 | User Story 2 scenarios 1–4; invalid multiple-primary diagnosis rejection |
+| FR-012–FR-016 | User Story 2 scenarios 1–5; invalid multiple-primary diagnosis rejection |
 | FR-017–FR-023 | User Story 3 scenarios 2–3; canonical-area, mastery, priority-range and difficulty-policy checks |
 | FR-024–FR-027 | User Story 1 scenarios 1–2 and User Story 3 scenario 1 |
 | FR-028–FR-030 | Reproducibility, auditability, local operation, secret scan and scope review |
-| FR-031 | Scope review confirms the subsystem and C1–C5 model remain documented but unimplemented in the first increment |
+| DC-001 (ex-FR-031) | Scope review confirms the subsystem and C1–C5 model remain documented but unimplemented in the first increment |
 
 ### Key Entities *(include if feature involves data)*
 
@@ -161,10 +167,10 @@ Estão fora do MVP: cobertura integral do currículo, substituição de professo
 
 ## Success Criteria *(mandatory)*
 
-### Measurable Outcomes
+### Measurable Product Outcomes
 
 - **SC-001**: Em uma avaliação de ponta a ponta, o usuário completa o ciclo de questão, tentativa, correção, diagnóstico, remediação e atualização sem depender de LLM.
-- **SC-002**: 100% das tentativas aceitas contêm questão, resposta, horário e duração; 100% das tentativas corrigidas indicam acerto ou erro e alternativa correta.
+- **SC-002**: 100% das tentativas aceitas contêm questão, resposta, horário e duração; 100% das tentativas corrigidas com gabarito oficial válido e aplicável indicam acerto ou erro e alternativa correta; tentativas associadas a questões anuladas ou com gabarito não resolvido são preservadas, não classificadas como acerto ou erro e não contabilizadas como erro do usuário.
 - **SC-003**: 100% das recomendações automáticas exibidas contêm pontuação no intervalo de 0 a 1, uma justificativa legível e os fatores disponíveis que sustentam a ordem apresentada.
 - **SC-004**: Para 100% dos casos de teste, entradas e configurações quantitativas idênticas produzem as mesmas métricas, prioridades e filas de revisão.
 - **SC-005**: A visão inicial apresenta os oito componentes mínimos e permite ao usuário responder às cinco perguntas essenciais sem consultar outra tela.
@@ -172,7 +178,10 @@ Estão fora do MVP: cobertura integral do currículo, substituição de professo
 - **SC-007**: Em revisão de aceitação, o usuário identifica corretamente a meta vigente, a atividade recomendada e pelo menos um motivo verificável para essa recomendação.
 - **SC-008**: O fluxo principal permanece utilizável quando qualquer recurso de LLM está indisponível.
 - **SC-009**: Nenhuma estimativa aproximada é rotulada como nota TRI real ou previsão exata, e os cenários de consolidação priorizam itens fáceis e médios quando essa necessidade está evidenciada.
-- **SC-010**: Uma auditoria de escopo encontra zero capacidades dos non-goals ou do subsistema de redação implementadas como parte da migração desta especificação.
+
+### Migration Acceptance
+
+- **MA-001**: Uma auditoria de escopo encontra zero capacidades dos non-goals ou do subsistema de redação implementadas como parte da migração desta especificação.
 
 ## Assumptions
 

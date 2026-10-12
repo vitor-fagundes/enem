@@ -13,7 +13,7 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
-pythonpath = ["packages/analytics/src"]
+pythonpath = ["packages/analytics/src", "packages/ingestion/src"]
 
 [tool.ruff]
 target-version = "py312"

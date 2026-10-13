@@ -7,9 +7,10 @@ import sqlite3
 import stat
 import sys
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, fields, replace
 from datetime import UTC, datetime
+from typing import BinaryIO
 
 from enem_rei_ingestion import __version__
 from enem_rei_ingestion.db import (
@@ -17,6 +18,8 @@ from enem_rei_ingestion.db import (
     IngestionRun,
     ResourceAcquisition,
     SourceResource,
+    ensure_schema,
+    get_connection,
     get_ingestion_run_by_id,
     get_source_resource_by_id,
     insert_ingestion_issue,
@@ -24,12 +27,25 @@ from enem_rei_ingestion.db import (
     insert_resource_acquisition,
     insert_source_resource,
 )
-from enem_rei_ingestion.hasher import SizeLimitExceeded, stream_verify_hash
+from enem_rei_ingestion.hasher import (
+    SizeLimitExceeded,
+    stream_copy_hash,
+    stream_verify_hash,
+)
 from enem_rei_ingestion.store import (
     PAYLOAD_NAME,
     RESOURCES_PATH,
     SHA256_HEX,
+    InputRejected,
     UnsafeStoragePath,
+    WriterLockHeld,
+    acquire_writer_lock,
+    clean_orphan_temps,
+    create_temp_file,
+    open_storage_anchor,
+    open_validated_input,
+    publish_payload,
+    release_writer_lock,
 )
 
 PIPELINE_NAME = "enem_rei_ingestion"
@@ -43,6 +59,8 @@ RESOURCE_COUNTERS = (
 RECORD_COUNTERS = ("records_read", "records_accepted", "records_rejected")
 RECOVERY_CAUSE = "recovered_after_interruption"
 ORPHAN_STAGE = "orphan_reconciliation"
+PRESERVE_UNIT = "preserve_input"
+FIXTURE_KINDS = ("SYNTHETIC", "DERIVED_FROM_REAL")
 
 
 class ReportUnavailable(Exception):
@@ -51,6 +69,26 @@ class ReportUnavailable(Exception):
 
 class OrphanPayloadDivergent(Exception):
     """Payload órfão não confere com hash/tamanho esperados; não pode ser adotado."""
+
+
+class IngestionFatal(Exception):
+    """Falha de infraestrutura que impede registrar ou finalizar o run (FATAL).
+
+    O diagnóstico já foi emitido em stderr; `run_id` é `None` quando o run não
+    chegou a ser registrado em SQLite. Nenhum relatório SQLite é fingido.
+    """
+
+    def __init__(self, message: str, run_id: str | None = None) -> None:
+        super().__init__(message)
+        self.run_id = run_id
+
+
+class UnitFailed(Exception):
+    """A unidade de preservação falhou; o issue `ERROR` já foi registrado."""
+
+    def __init__(self, issue: IngestionIssue) -> None:
+        super().__init__(issue.message)
+        self.issue = issue
 
 
 # Limite padrão de bytes lidos de cada arquivo de entrada (arquivo local ou ZIP),
@@ -68,18 +106,26 @@ def create_run(
 ) -> IngestionRun:
     """Registra um run `RUNNING` sem commit; o chamador controla a transação.
 
-    A identidade do run é alocada antes de qualquer validação ou persistência.
-    `parameters` recebe o `max_input_bytes` efetivo. Se o run não puder ser
-    persistido, emite diagnóstico `FATAL` em stderr com o id alocado e propaga a
-    falha: nenhum payload pode ser publicado sem run registrado (FR-011).
+    `parameters` recebe o `max_input_bytes` efetivo; override inválido gera
+    `ValueError` antes de persistir (o orquestrador registra esse caso como run
+    `FAILED`, ver `ingest_local_file`). Se o run não puder ser persistido, emite
+    diagnóstico `FATAL` em stderr com o id alocado e propaga a falha: nenhum
+    payload pode ser publicado sem run registrado (FR-011).
     """
-    run_id = str(uuid.uuid4())
     effective = {
         **parameters,
         "max_input_bytes": _effective_max_input_bytes(
             parameters.get("max_input_bytes")
         ),
     }
+    return _register_run(conn, effective)
+
+
+def _register_run(
+    conn: sqlite3.Connection, effective: Mapping[str, object]
+) -> IngestionRun:
+    # Persiste `effective` como recebido; validar limites cabe ao chamador.
+    run_id = str(uuid.uuid4())
     run = IngestionRun(
         id=run_id,
         pipeline_name=PIPELINE_NAME,
@@ -472,6 +518,463 @@ def reconcile_orphan(
         resource_id=resource.id,
     )
     return resource, acquisition
+
+
+def ingest_local_file(
+    db_path: str | os.PathLike[str],
+    data_root: str | os.PathLike[str],
+    input_path: str | os.PathLike[str],
+    *,
+    source_definition_id: str | None = None,
+    source_url: str | None = None,
+    provider: str | None = None,
+    source_retrieved_at: str | None = None,
+    fixture_kind: str | None = None,
+    max_input_bytes: int | None = None,
+) -> dict:
+    """Ingere um arquivo local em um único run e devolve o relatório (FR-015).
+
+    Ordem: lock exclusivo → SQLite + schema → run `RUNNING` com commit →
+    recuperação de runs abandonados → limpeza de temporários órfãos → validação
+    do input → `_preserve_file` → finalização com commit → relatório relido de
+    SQLite. Toda invocação que obtém lock e banco registra exatamente um run,
+    inclusive com input inexistente/rejeitado ou parâmetro inválido, finalizado
+    `FAILED` com issue explicando a causa.
+
+    Parâmetro inválido (`max_input_bytes` fora de inteiro >= 0, `fixture_kind`
+    fora do domínio) não vira limite efetivo fictício: `parameters` grava
+    `max_input_bytes = None` (nenhum limite aplicado, pois nada é lido) e o
+    valor recebido em `rejected_parameters`; o input não é aberto.
+
+    Contadores do run: uma unidade `preserve_input`. Contadores medem
+    tentativas de preservação (FR-013): parâmetro inválido barra a unidade antes
+    de qualquer tentativa, logo todos ficam 0 e a unidade fica `FAILED`. Nos
+    demais casos `resources_seen = 1`; se a unidade não conclui (input,
+    limite, divergência, armazenamento, persistência), `resources_failed = 1`
+    e a unidade fica `FAILED` com `resource_id = None` (o issue referencia o
+    recurso quando há).
+
+    Falha ao obter o lock, abrir o banco, registrar ou finalizar o run gera
+    `IngestionFatal` após diagnóstico em stderr; nada é publicado antes de o run
+    estar persistido. `fixture_kind` informado usa o método `FIXTURE`.
+    """
+    context = {
+        "source_definition_id": source_definition_id,
+        "source_url": source_url,
+        "provider": provider,
+        "source_retrieved_at": source_retrieved_at,
+        "fixture_kind": fixture_kind,
+    }
+    parameters, rejected = _local_file_parameters(input_path, context, max_input_bytes)
+
+    try:
+        lock_fd = acquire_writer_lock(data_root)
+    except (WriterLockHeld, OSError) as exc:
+        raise _fatal(f"lock de escrita indisponível em {data_root}: {exc}") from exc
+    conn = None
+    try:
+        try:
+            conn = get_connection(db_path)
+            ensure_schema(conn)
+        except (sqlite3.Error, RuntimeError) as exc:
+            raise _fatal(f"SQLite indisponível em {db_path}: {exc}") from exc
+        run = None
+        try:
+            if rejected:
+                run = _register_run(conn, parameters)
+            else:
+                run = create_run(conn, parameters)
+            conn.commit()
+        except sqlite3.Error as exc:
+            _rollback(conn)
+            if run is None:  # create_run já emitiu o diagnóstico com o id alocado.
+                raise IngestionFatal("run não registrado em SQLite") from exc
+            raise _fatal(f"commit do run falhou: {exc}", run.id) from exc
+        return _execute_local_file(conn, run, data_root, input_path, context, rejected)
+    finally:
+        if conn is not None:
+            conn.close()
+        release_writer_lock(lock_fd)
+
+
+def _execute_local_file(
+    conn: sqlite3.Connection,
+    run: IngestionRun,
+    data_root: str | os.PathLike[str],
+    input_path: str | os.PathLike[str],
+    context: Mapping[str, str | None],
+    rejected: Mapping[str, str],
+) -> dict:
+    preserved = None
+    persistence_error = None
+    resources_fd = None
+    try:
+        try:
+            resources_fd = _prepare_storage(conn, run, data_root)
+            if resources_fd is not None:
+                preserved = _preserve_input(
+                    conn, resources_fd, run, input_path, context, rejected
+                )
+        except sqlite3.Error as exc:
+            _rollback(conn)
+            persistence_error = exc
+    finally:
+        if resources_fd is not None:
+            os.close(resources_fd)
+
+    unit = {"name": PRESERVE_UNIT, "status": "FAILED", "resource_id": None}
+    counters = dict.fromkeys(RESOURCE_COUNTERS, 0)
+    if preserved is None:
+        # Parâmetro inválido barra a unidade antes de qualquer tentativa de
+        # preservação: contadores ficam 0, mas a unidade segue FAILED (FR-013).
+        if not rejected:
+            counters["resources_seen"] = counters["resources_failed"] = 1
+    else:
+        counters["resources_seen"] = 1
+        resource, _, outcome = preserved
+        counters[f"resources_{outcome}"] = 1
+        unit.update(status="SUCCESS", resource_id=resource.id)
+    # Falha estrutural de persistência prevalece; unidade já confirmada fica.
+    status = "SUCCESS" if preserved and persistence_error is None else "FAILED"
+    try:
+        if persistence_error is not None:
+            record_issue(
+                conn,
+                run.id,
+                "persistence",
+                "FATAL",
+                f"falha ao gravar em SQLite: {persistence_error}",
+                exception_type=type(persistence_error).__name__,
+            )
+        finished = finalize_run(conn, run, status, {**counters, "units": [unit]})
+        conn.commit()
+    except sqlite3.Error as exc:
+        _rollback(conn)
+        # O run permanece RUNNING e será recuperado como FAILED (FR-017).
+        raise _fatal(f"não foi possível finalizar o run: {exc}", run.id) from exc
+    return generate_report(conn, finished)
+
+
+def _prepare_storage(
+    conn: sqlite3.Connection, run: IngestionRun, data_root: str | os.PathLike[str]
+) -> int | None:
+    # Sob o lock: recupera runs abandonados e limpa temporários de outros runs.
+    # Retorna `resources_fd` (o chamador fecha) ou None se o armazenamento
+    # estiver indisponível, caso em que registra issue FATAL.
+    recovered = recover_abandoned_runs(conn, current_run_id=run.id)
+    if recovered:
+        record_issue(
+            conn,
+            run.id,
+            "recovery",
+            "INFO",
+            "runs abandonados finalizados como FAILED: "
+            + ", ".join(r.id for r in recovered),
+        )
+    resources_fd = None
+    try:
+        resources_fd = open_storage_anchor(data_root)
+        removed = clean_orphan_temps(resources_fd, run.id)
+    except (OSError, UnsafeStoragePath) as exc:
+        if resources_fd is not None:
+            os.close(resources_fd)
+        record_issue(
+            conn,
+            run.id,
+            "storage",
+            "FATAL",
+            f"armazenamento controlado indisponível: {exc}",
+            exception_type=type(exc).__name__,
+        )
+        return None
+    try:
+        if removed:
+            record_issue(
+                conn,
+                run.id,
+                "temp_cleanup",
+                "INFO",
+                "temporários abandonados removidos: " + ", ".join(removed),
+            )
+        conn.commit()
+    except BaseException:
+        os.close(resources_fd)
+        raise
+    return resources_fd
+
+
+def _preserve_input(
+    conn: sqlite3.Connection,
+    resources_fd: int,
+    run: IngestionRun,
+    input_path: str | os.PathLike[str],
+    context: Mapping[str, str | None],
+    rejected: Mapping[str, str],
+) -> tuple[SourceResource, ResourceAcquisition, str] | None:
+    # Unidade `preserve_input`; None quando falha com issue ERROR registrado.
+    input_reference = os.fspath(input_path)
+    if rejected:
+        for name, value in rejected.items():
+            record_issue(
+                conn,
+                run.id,
+                "parameters",
+                "ERROR",
+                f"parâmetro inválido {name}={value}; input não processado",
+                input_reference=input_reference,
+            )
+        return None
+    try:
+        input_file = open_validated_input(input_path)
+    except (OSError, InputRejected) as exc:
+        record_issue(
+            conn,
+            run.id,
+            "input",
+            "ERROR",
+            f"input não pode ser lido: {exc}",
+            input_reference=input_reference,
+            exception_type=type(exc).__name__,
+        )
+        return None
+    method = "LOCAL_FILE" if context["fixture_kind"] is None else "FIXTURE"
+    max_bytes = json.loads(run.parameters)["max_input_bytes"]
+    with input_file:
+        try:
+            return _preserve_file(
+                conn,
+                resources_fd,
+                input_file,
+                run,
+                max_bytes,
+                method,
+                input_path=input_path,
+                **context,
+            )
+        except UnitFailed:
+            return None
+
+
+def _preserve_file(
+    conn: sqlite3.Connection,
+    resources_fd: int,
+    input_file: BinaryIO,
+    run: IngestionRun,
+    max_bytes: int,
+    method: str = "LOCAL_FILE",
+    **context: str | os.PathLike[str] | None,
+) -> tuple[SourceResource, ResourceAcquisition, str]:
+    """Preserva os bytes de `input_file` como recurso e registra a aquisição.
+
+    Núcleo reutilizável dentro de um run e lock já obtidos (FR-015 passos 2–6):
+    copia em streaming para temporário controlado calculando SHA-256 e tamanho
+    na mesma leitura, sob `max_bytes` finito; faz flush/fsync/close e revalida o
+    temporário (nunca relê a origem: se ela mudou durante a leitura, vale o
+    hash dos bytes copiados). Depois: recurso já registrado só é reutilizado se
+    `revalidate_existing` confirmar o payload; senão publica sem sobrescrita, e
+    payload existente sem linha SQLite (órfão) segue `reconcile_orphan`.
+    Recurso e aquisição são gravados na mesma transação, com commit (que também
+    confirma o que o chamador tiver pendente) antes de retornar
+    `(recurso, aquisição, "created" | "reused")`.
+
+    Janela publicação→commit: se o processo cair após `os.link` e antes do
+    commit, fica payload órfão sem linha em SQLite; ele é detectável e é
+    reconciliado na reingestão dos mesmos bytes (FR-017, T-020).
+
+    Falha da unidade registra issue `ERROR` sem commit e levanta `UnitFailed`;
+    erro de SQLite faz rollback e é propagado. O temporário é removido em
+    qualquer caminho e nunca vira recurso. `media_type` fica `None` (FR-021).
+    """
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 0:
+        raise ValueError(f"max_bytes deve ser limite finito >= 0: {max_bytes!r}")
+    input_path = context.get("input_path")
+    input_reference = None if input_path is None else os.fspath(input_path)
+
+    def fail(
+        stage: str,
+        message: str,
+        exc: BaseException | None = None,
+        resource_id: str | None = None,
+    ) -> UnitFailed:
+        issue = record_issue(
+            conn,
+            run.id,
+            stage,
+            "ERROR",
+            message,
+            resource_id=resource_id,
+            input_reference=input_reference,
+            exception_type=None if exc is None else type(exc).__name__,
+        )
+        return UnitFailed(issue)
+
+    try:
+        tmp_fd, tmp_name = create_temp_file(resources_fd, run.id)
+    except OSError as exc:
+        raise fail("preserve", f"falha ao criar temporário: {exc}", exc) from exc
+    try:
+        try:
+            sha256_hex, byte_size = _copy_to_temp(tmp_fd, input_file, max_bytes)
+        except SizeLimitExceeded as exc:
+            raise fail(
+                "preserve", f"input excede max_input_bytes={max_bytes}", exc
+            ) from exc
+        except OSError as exc:
+            raise fail("preserve", f"falha na cópia do input: {exc}", exc) from exc
+        try:
+            verified = _verify_temp(resources_fd, tmp_name, byte_size)
+        except OSError as exc:
+            raise fail("preserve", f"falha ao validar temporário: {exc}", exc) from exc
+        if verified != (sha256_hex, byte_size):
+            raise fail("preserve", "temporário diverge do hash/tamanho copiados")
+        try:
+            return _register_preserved(
+                conn,
+                resources_fd,
+                tmp_name,
+                run,
+                sha256_hex,
+                byte_size,
+                method,
+                context,
+                fail,
+            )
+        except sqlite3.Error:
+            _rollback(conn)
+            raise
+    finally:
+        try:
+            os.unlink(tmp_name, dir_fd=resources_fd)
+        except FileNotFoundError:
+            pass  # Já publicado: `publish_payload` removeu o nome temporário.
+
+
+def _register_preserved(
+    conn: sqlite3.Connection,
+    resources_fd: int,
+    tmp_name: str,
+    run: IngestionRun,
+    sha256_hex: str,
+    byte_size: int,
+    method: str,
+    context: Mapping[str, str | os.PathLike[str] | None],
+    fail: Callable[..., UnitFailed],
+) -> tuple[SourceResource, ResourceAcquisition, str]:
+    row = conn.execute(
+        "SELECT id FROM source_resource WHERE sha256 = ?", (sha256_hex,)
+    ).fetchone()
+    if row is not None:
+        existing = get_source_resource_by_id(conn, row[0])
+        try:
+            intact = existing.byte_size == byte_size and revalidate_existing(
+                resources_fd, sha256_hex, existing.byte_size
+            )
+        except (OSError, UnsafeStoragePath) as exc:
+            raise fail(
+                "dedup", f"falha ao revalidar payload: {exc}", exc, existing.id
+            ) from exc
+        if not intact:
+            # FR-016: sem reuso, sem sobrescrita, sem corrigir metadados.
+            raise fail(
+                "dedup",
+                f"payload registrado {sha256_hex} ausente ou divergente; reuso"
+                " recusado e nada sobrescrito",
+                resource_id=existing.id,
+            )
+        acquisition = record_acquisition(conn, existing, run, method, **context)
+        conn.commit()
+        return existing, acquisition, "reused"
+
+    try:
+        storage_locator = publish_payload(resources_fd, tmp_name, sha256_hex)
+    except FileExistsError:
+        try:
+            resource, acquisition = reconcile_orphan(
+                conn, resources_fd, run, sha256_hex, byte_size, method, **context
+            )
+        except (OrphanPayloadDivergent, OSError, UnsafeStoragePath) as exc:
+            raise fail(
+                ORPHAN_STAGE,
+                f"payload órfão {sha256_hex} não adotado: {exc}",
+                exc,
+            ) from exc
+        conn.commit()
+        return resource, acquisition, "created"
+    except (OSError, UnsafeStoragePath) as exc:
+        raise fail("publish", f"falha ao publicar payload: {exc}", exc) from exc
+    resource = SourceResource(
+        id=str(uuid.uuid4()),
+        sha256=sha256_hex,
+        byte_size=byte_size,
+        media_type=None,
+        storage_locator=storage_locator,
+        registered_at=_utc_now(),
+    )
+    insert_source_resource(conn, resource)
+    acquisition = record_acquisition(conn, resource, run, method, **context)
+    conn.commit()
+    return resource, acquisition, "created"
+
+
+def _copy_to_temp(tmp_fd: int, source: BinaryIO, max_bytes: int) -> tuple[str, int]:
+    try:
+        # Escrita bufferizada: `os.write` cru pode gravar parcialmente.
+        tmp = os.fdopen(tmp_fd, "wb")
+    except BaseException:
+        os.close(tmp_fd)
+        raise
+    with tmp:
+        digest = stream_copy_hash(source, tmp, max_bytes)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+    return digest
+
+
+def _verify_temp(
+    resources_fd: int, tmp_name: str, byte_size: int
+) -> tuple[str, int] | None:
+    # Relê apenas o temporário controlado (FR-015 passo 4), nunca a origem.
+    fd = os.open(tmp_name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=resources_fd)
+    with os.fdopen(fd, "rb") as tmp:
+        try:
+            return stream_verify_hash(tmp, max_bytes=byte_size)
+        except SizeLimitExceeded:
+            return None
+
+
+def _local_file_parameters(
+    input_path: str | os.PathLike[str],
+    context: Mapping[str, str | None],
+    max_input_bytes: object,
+) -> tuple[dict[str, object], dict[str, str]]:
+    # Parâmetros do run e parâmetros rejeitados (nome → repr do valor recebido).
+    parameters: dict[str, object] = {"input_path": os.fspath(input_path), **context}
+    rejected: dict[str, str] = {}
+    try:
+        parameters["max_input_bytes"] = _effective_max_input_bytes(max_input_bytes)
+    except ValueError:
+        rejected["max_input_bytes"] = repr(max_input_bytes)
+        parameters["max_input_bytes"] = None
+    if context["fixture_kind"] not in (None, *FIXTURE_KINDS):
+        rejected["fixture_kind"] = repr(context["fixture_kind"])
+        parameters["fixture_kind"] = None
+    if rejected:
+        parameters["rejected_parameters"] = rejected
+    return parameters, rejected
+
+
+def _fatal(message: str, run_id: str | None = None) -> IngestionFatal:
+    run_label = "sem run registrado" if run_id is None else f"run {run_id}"
+    print(f"FATAL ({run_label}): {message}", file=sys.stderr)
+    return IngestionFatal(message, run_id)
+
+
+def _rollback(conn: sqlite3.Connection) -> None:
+    # Após erro de escrita, a transação implícita bloquearia outros writers.
+    try:
+        conn.rollback()
+    except sqlite3.Error:
+        pass
 
 
 def _effective_max_input_bytes(override: object) -> int:

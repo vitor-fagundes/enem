@@ -6,6 +6,9 @@ import { defineConfig, devices } from "@playwright/test";
  * M2: cada servidor gera seu próprio data_root SINTÉTICO (SQLite de ingestão
  * real via `ingest_local_file`) antes de iniciar; nenhum dado real é usado.
  * 3100 → gabarito verificado; 3101 → gabarito não verificado.
+ * M3: o mesmo data_root sintético serve o catálogo; 3100 usa `catalog/`
+ * (três questões válidas + entradas rejeitadas) e 3101 `catalog-compromised/`
+ * (gabarito adulterado em uma questão e caderno adulterado em outra).
  */
 function m2Server(port: number, variant: "verified" | "unverified-key") {
   const fixture = join(tmpdir(), "enem-rei-m2-e2e", variant);
@@ -19,6 +22,11 @@ function m2Server(port: number, variant: "verified" | "unverified-key") {
     env: {
       ENEM_M2_QUESTION_PATH: join(fixture, `question-${variant}.json`),
       ENEM_M2_DATA_ROOT: join(fixture, "data_root"),
+      ENEM_CATALOG_DIR: join(
+        fixture,
+        variant === "verified" ? "catalog" : "catalog-compromised",
+      ),
+      ENEM_DATA_ROOT: join(fixture, "data_root"),
     },
   };
 }

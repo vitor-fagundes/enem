@@ -1,6 +1,6 @@
 /**
- * Server-side only. Verifica a proveniência da questão do M2 contra o SQLite de
- * ingestão (SPEC-004), que permanece a autoridade dos metadados de recurso.
+ * Server-side only. Verifica a proveniência das questões do M2/M3 contra o
+ * SQLite de ingestão (SPEC-004; ADR-0002), que permanece a autoridade dos metadados de recurso.
  * Abre o banco somente leitura e só lê os payloads; nunca escreve.
  */
 import { createHash } from "node:crypto";
@@ -12,7 +12,7 @@ import {
   type AnswerKey,
   type CuratedQuestion,
   type ResourceReference,
-  resourceIdsForRoles,
+  assessProvenance,
   validateQuestion,
 } from "../../domain/question";
 
@@ -117,6 +117,99 @@ export async function checkResource(
   };
 }
 
+/** Chave do recurso referenciado: verificação única por (id, SHA-256, URL). */
+export function resourceKey(reference: ResourceReference): string {
+  return JSON.stringify([
+    reference.resource_id,
+    reference.sha256,
+    reference.source_url,
+  ]);
+}
+
+function failedCheck(
+  reference: ResourceReference,
+  problem: string,
+): ResourceCheck {
+  return {
+    resource_id: reference.resource_id,
+    sha256: reference.sha256,
+    ok: false,
+    problems: [problem],
+  };
+}
+
+/**
+ * Verifica cada recurso distinto UMA vez (mesma chamada = mesma requisição),
+ * abrindo o SQLite de ingestão uma única vez, somente leitura. Sem cache entre
+ * chamadas. Resultado indexado por `resourceKey`.
+ */
+export async function verifyResources(
+  dataRoot: string,
+  references: readonly ResourceReference[],
+): Promise<Map<string, ResourceCheck>> {
+  const distinct = new Map<string, ResourceReference>();
+  for (const reference of references) {
+    const key = resourceKey(reference);
+    if (!distinct.has(key)) distinct.set(key, reference);
+  }
+  const checks = new Map<string, ResourceCheck>();
+  if (distinct.size === 0) return checks;
+
+  let db: Database.Database;
+  try {
+    db = new Database(join(dataRoot, "ingestion.db"), {
+      readonly: true,
+      fileMustExist: true,
+    });
+  } catch (error) {
+    for (const [key, reference] of distinct) {
+      checks.set(
+        key,
+        failedCheck(
+          reference,
+          `SQLite de ingestão indisponível: ${(error as Error).message}`,
+        ),
+      );
+    }
+    return checks;
+  }
+  try {
+    for (const [key, reference] of distinct) {
+      checks.set(key, await checkResource(db, dataRoot, reference));
+    }
+  } catch (error) {
+    for (const [key, reference] of distinct) {
+      checks.set(
+        key,
+        failedCheck(
+          reference,
+          `falha ao consultar SQLite: ${(error as Error).message}`,
+        ),
+      );
+    }
+  } finally {
+    db.close();
+  }
+  return checks;
+}
+
+/** Verificações dos recursos de uma questão, na ordem de `resources`. */
+export function checksFor(
+  question: CuratedQuestion,
+  verified: ReadonlyMap<string, ResourceCheck>,
+): ResourceCheck[] {
+  return question.resources.map(
+    (resource) =>
+      verified.get(resourceKey(resource)) ??
+      failedCheck(resource, "recurso não verificado"),
+  );
+}
+
+/** Recursos (por resource_id) cuja verificação falhou. */
+export function failedResourceIds(checks: readonly ResourceCheck[]) {
+  return new Set(checks.filter((c) => !c.ok).map((c) => c.resource_id));
+}
+
 /**
  * Carrega e verifica a questão. Falha em recurso de conteúdo/posição impede a
  * exibição; falha apenas em recurso do gabarito exibe a questão sem correção.
@@ -142,59 +235,16 @@ export async function loadVerifiedQuestion(
   }
   const question = validation.question;
 
-  let db: Database.Database;
-  try {
-    db = new Database(join(dataRoot, "ingestion.db"), {
-      readonly: true,
-      fileMustExist: true,
-    });
-  } catch (error) {
-    return {
-      status: "PROVENANCE_ERROR",
-      checks: question.resources.map((resource) => ({
-        resource_id: resource.resource_id,
-        sha256: resource.sha256,
-        ok: false,
-        problems: [
-          `SQLite de ingestão indisponível: ${(error as Error).message}`,
-        ],
-      })),
-    };
-  }
-  let checks: ResourceCheck[];
-  try {
-    checks = [];
-    for (const resource of question.resources) {
-      checks.push(await checkResource(db, dataRoot, resource));
-    }
-  } catch (error) {
-    checks = question.resources.map((resource) => ({
-      resource_id: resource.resource_id,
-      sha256: resource.sha256,
-      ok: false,
-      problems: [`falha ao consultar SQLite: ${(error as Error).message}`],
-    }));
-  } finally {
-    db.close();
-  }
-
-  const failed = new Set(checks.filter((c) => !c.ok).map((c) => c.resource_id));
-  const contentResources = resourceIdsForRoles(question, [
-    "CONTENT",
-    "PLACEMENT",
-  ]);
-  if ([...contentResources].some((id) => failed.has(id))) {
-    return { status: "PROVENANCE_ERROR", checks };
-  }
-  const keyResources = resourceIdsForRoles(question, ["ANSWER_KEY"]);
-  const keyVerified =
-    question.answer_key !== null &&
-    keyResources.size > 0 &&
-    [...keyResources].every((id) => !failed.has(id));
+  const checks = checksFor(
+    question,
+    await verifyResources(dataRoot, question.resources),
+  );
+  const assessment = assessProvenance(question, failedResourceIds(checks));
+  if (assessment.blocked) return { status: "PROVENANCE_ERROR", checks };
   return {
     status: "READY",
     question,
-    verifiedAnswerKey: keyVerified ? question.answer_key : null,
+    verifiedAnswerKey: assessment.verifiedAnswerKey,
     checks,
   };
 }

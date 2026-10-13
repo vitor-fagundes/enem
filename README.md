@@ -86,6 +86,25 @@ npm run start
 
 Abra http://127.0.0.1:3000/questao. Sem as variáveis, a página informa que a questão não está configurada. A cada requisição o servidor abre o SQLite somente leitura e confere, para cada recurso referenciado: `source_resource` com o mesmo SHA-256 e `resource_id`, `storage_locator = raw/resources/<sha256>/payload`, aquisição registrada com a URL referenciada e SHA-256/tamanho recalculados do payload. Falha em recurso do caderno mostra erro de proveniência (a questão não é exibida); falha só no gabarito mostra a questão com "gabarito não verificado" e sem correção. Respostas ficam apenas na memória da página. Testes usam somente dados sintéticos gerados por `apps/web/tests/e2e/support/build_m2_fixture.py` (que chama `ingest_local_file`).
 
+## M3 — catálogo de questões (`/questoes`)
+
+Escopo e aceitação em [docs/m3-catalogo-questoes.md](docs/m3-catalogo-questoes.md); leitura do SQLite pela web em [ADR-0002](docs/adr/0002-web-readonly-ingestion-sqlite.md). Os dados continuam **fora do Git**:
+
+- `ENEM_CATALOG_DIR`: diretório com um arquivo JSON por questão (formato `enem-rei/m2-question/v1`). Só arquivos regulares `*.json` são lidos; backups `.bak-*`, outros arquivos, diretórios e links simbólicos são ignorados.
+- `ENEM_DATA_ROOT`: data_root da ingestão (`ingestion.db` e payloads), como no M2.
+
+```bash
+npm run build
+R=$HOME/.local/share/enem-rei/m2
+ENEM_CATALOG_DIR=$R/curation ENEM_DATA_ROOT=$R/data_root \
+ENEM_M2_QUESTION_PATH=$R/curation/enem-2024-d1-cd1-q10.json ENEM_M2_DATA_ROOT=$R/data_root \
+npm run start
+```
+
+Abra http://127.0.0.1:3000/questoes. Sem as duas variáveis, a página informa que o catálogo não está configurado. Regras de entrada: JSON válido pelo domínio do M2, contexto de numeração `COMMON`, confirmação humana registrada (`extraction.confirmation_recorded_at`) e nome do arquivo igual a `<id>.json`, com `id = enem-<ano>-d<dia>-cd<caderno>-q<N>`. JSON malformado, estrutura inválida, outro contexto, falta de confirmação, nome divergente ou posição duplicada (todas as entradas conflitantes) ficam fora do catálogo e aparecem em "Arquivos fora do catálogo". A lista segue a ordem numérica; `/questoes/<id>` reutiliza o corpo, o formulário e o bloco de fonte do M2, com anterior/próxima (a resposta é descartada ao navegar). ID inexistente ou excluído responde 404.
+
+A cada requisição, cada recurso distinto referenciado pelas questões é verificado uma única vez (mesmas conferências do M2, SQLite aberto uma vez, somente leitura), sem cache entre requisições. Falha no caderno marca apenas as questões dependentes como "Erro de proveniência: questão indisponível" (sem link; a página mostra o erro e não a questão; a navegação a pula); falha só no gabarito exibe a questão com "Gabarito não verificado" e sem correção. Testes usam o catálogo sintético gerado por `build_m2_fixture.py` (diretórios `catalog/` e `catalog-compromised/`), servido nas portas 3100/3101 do Playwright.
+
 ## Política de dados
 
 [data/README.md](data/README.md): raw é imutável. Nunca alterar originais; correções geram novas versões. Toda ingestão futura deve preservar manifesto, hash e lineage. Não versionar datasets grandes, bancos locais ou credenciais. Nenhum dataset foi baixado; ainda não existe ingestão ou mecanismo executável de proteção de raw.

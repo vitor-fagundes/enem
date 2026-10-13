@@ -326,3 +326,34 @@ export function resourceIdsForRoles(
       .map((evidence) => evidence.locator.resource_id),
   );
 }
+
+export type ProvenanceAssessment =
+  { blocked: true } | { blocked: false; verifiedAnswerKey: AnswerKey | null };
+
+/**
+ * Regra do M2 (reutilizada no M3) para classificar a questão a partir dos
+ * recursos cuja verificação falhou: falha em recurso de conteúdo/posição
+ * bloqueia a exibição; falha apenas em recurso do gabarito exibe a questão
+ * sem correção (gabarito não verificado).
+ */
+export function assessProvenance(
+  question: CuratedQuestion,
+  failedResourceIds: ReadonlySet<string>,
+): ProvenanceAssessment {
+  const contentResources = resourceIdsForRoles(question, [
+    "CONTENT",
+    "PLACEMENT",
+  ]);
+  if ([...contentResources].some((id) => failedResourceIds.has(id))) {
+    return { blocked: true };
+  }
+  const keyResources = resourceIdsForRoles(question, ["ANSWER_KEY"]);
+  const keyVerified =
+    question.answer_key !== null &&
+    keyResources.size > 0 &&
+    [...keyResources].every((id) => !failedResourceIds.has(id));
+  return {
+    blocked: false,
+    verifiedAnswerKey: keyVerified ? question.answer_key : null,
+  };
+}

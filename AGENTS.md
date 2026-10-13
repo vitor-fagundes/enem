@@ -15,7 +15,7 @@
 
 ## Escopo atual
 
-Fundação técnica e implementação incremental da SPEC-004 (`specs/004-source-resource-and-local-ingestion/`), incluindo ingestão de arquivos locais, conforme suas tarefas e contratos aprovados, uma tarefa explicitamente atribuída por vez (ver "Fluxo de desenvolvimento por tarefa"). Também autorizado: marco M2 — uma única questão real do ENEM, interativa em `apps/web`, estritamente conforme `docs/m2-primeira-questao.md`. Não implementar o que estiver fora dessas tarefas e do M2: parser de microdados, login/autenticação, RAG/OpenAI, recommendation engine, mastery, redação, scraping ou dashboard completo.
+Fundação técnica e implementação incremental da SPEC-004 (`specs/004-source-resource-and-local-ingestion/`), incluindo ingestão de arquivos locais, conforme suas tarefas e contratos aprovados, uma tarefa explicitamente atribuída por vez (ver "Fluxo de desenvolvimento por tarefa"). Também autorizado: marco M2 — uma única questão real do ENEM, interativa em `apps/web`, estritamente conforme `docs/m2-primeira-questao.md`. Também autorizado: marco M3 — catálogo local de três questões reais verificadas do ENEM em `apps/web`, estritamente conforme `docs/m3-catalogo-questoes.md` e `docs/adr/0002-web-readonly-ingestion-sqlite.md`. Não implementar o que estiver fora dessas tarefas, do M2 e do M3: parser de microdados, login/autenticação, RAG/OpenAI, recommendation engine, mastery, redação, scraping ou dashboard completo.
 Não remover arquivos existentes. Não baixar grandes datasets nem versionar dados reais.
 Sem microsserviços, Swarm, Kubernetes, Kafka, Spark, Redis, Elasticsearch, banco vetorial, filas distribuídas, event sourcing ou CQRS nesta etapa.
 

@@ -15,7 +15,7 @@
 
 ## Escopo atual
 
-Somente fundação técnica. Não implementar ingestão completa, parser de microdados, login/autenticação, RAG/OpenAI, recommendation engine, mastery, redação, scraping ou dashboard completo nesta etapa.
+Fundação técnica e implementação incremental da SPEC-004 (`specs/004-source-resource-and-local-ingestion/`), incluindo ingestão de arquivos locais, conforme suas tarefas e contratos aprovados, uma tarefa explicitamente atribuída por vez (ver "Fluxo de desenvolvimento por tarefa"). Também autorizado: marco M2 — uma única questão real do ENEM, interativa em `apps/web`, estritamente conforme `docs/m2-primeira-questao.md`. Não implementar o que estiver fora dessas tarefas e do M2: parser de microdados, login/autenticação, RAG/OpenAI, recommendation engine, mastery, redação, scraping ou dashboard completo.
 Não remover arquivos existentes. Não baixar grandes datasets nem versionar dados reais.
 Sem microsserviços, Swarm, Kubernetes, Kafka, Spark, Redis, Elasticsearch, banco vetorial, filas distribuídas, event sourcing ou CQRS nesta etapa.
 
@@ -24,3 +24,21 @@ Sem microsserviços, Swarm, Kubernetes, Kafka, Spark, Redis, Elasticsearch, banc
 Na raiz: `npm run lint`, `npm run format:check`, `npm run typecheck`, `npm test`, `npm run build`, `npm run test:e2e`.
 Python: `uv run --frozen ruff check .`, `uv run --frozen ruff format --check .`, `uv run --frozen pytest`.
 Use os lockfiles; atualizações de dependências devem ser intencionais.
+
+## Fluxo de desenvolvimento por tarefa
+
+Vale para qualquer agente: subagente `implementador` (Claude Code) ou skill `desenvolvimento` (Codex).
+
+1. Execute somente a tarefa explicitamente atribuída (ex.: "T-021 de `specs/004-.../tasks.md`"). Avance para outra tarefa apenas se o usuário autorizar explicitamente um lote, nomeando as tarefas.
+2. Leia a seção atual da tarefa, suas dependências, as specs/contratos citados e o código existente relacionado.
+3. Ambiguidade, contradição ou dependência ausente que impeça a tarefa: pare e reporte antes de implementar (regra 11).
+4. Implemente a menor solução correta. Se a tarefa for test-first, escreva os testes, confirme que falham e só então implemente.
+5. Rode os testes focados e a validação relevante (seção Validação).
+6. Revise `git status` e `git diff`. Corrija defeitos confirmados com no máximo um ciclo automático de correção; o que restar vai para o relatório.
+7. Pare e reporte: arquivos alterados, testes e resultados reais, desvios da tarefa, bloqueios e decisões pendentes para o usuário.
+
+Restrições:
+
+- Nunca execute `git commit`, `git push` ou crie pull requests. Não altere histórico, refs ou remotes (`rebase`, `reset`, `merge`, `cherry-pick`, `revert`, `am`, `remote add/remove/set-url`). Inspeção (`git status`, `diff`, `log`, `show`) é permitida.
+- Sem APIs pagas, chaves de API, novas dependências, novas specs ou frameworks.
+- Não amplie o escopo nem inicie ciclos de melhoria além da tarefa.

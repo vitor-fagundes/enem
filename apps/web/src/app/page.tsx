@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-20">
@@ -8,6 +10,11 @@ export default function Home() {
       <p className="mt-4 text-slate-600">
         Fundação técnica. As funcionalidades de estudo serão implementadas
         conforme as próximas especificações.
+      </p>
+      <p className="mt-4">
+        <Link className="underline" href="/questao">
+          Responder a questão do M2
+        </Link>
       </p>
     </main>
   );

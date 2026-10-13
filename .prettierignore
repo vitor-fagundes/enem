@@ -9,3 +9,7 @@ specs
 .ruff_cache
 playwright-report
 test-results
+# Gerados pelo Spec Kit (fora do escopo de formatação do projeto)
+.specify
+.claude/skills/speckit-*
+.agents/skills/speckit-*

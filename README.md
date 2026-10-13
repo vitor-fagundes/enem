@@ -70,6 +70,22 @@ Playwright testa o build de produção na porta 3100; execute o build antes. Em 
 
 Vitest verifica persistência real SQLite via Drizzle em arquivo temporário; pytest verifica Polars → Parquet → DuckDB com dados sintéticos; Playwright verifica a página servida. Não representam testes de regras de negócio ainda não implementadas.
 
+## M2 — primeira questão (`/questao`)
+
+Escopo e aceitação em [docs/m2-primeira-questao.md](docs/m2-primeira-questao.md). A página lê um arquivo de questão curado (JSON, formato `enem-rei/m2-question/v1`) e o data_root da ingestão (SPEC-004), ambos **fora do Git**, informados por variáveis de ambiente:
+
+- `ENEM_M2_QUESTION_PATH`: arquivo da questão curada; o bloco `extraction` registra o método da transcrição e da conferência (`verified_at` pode ser `null` quando o horário da conferência não foi registrado; `confirmation_recorded_at`, opcional, é o horário do registro da confirmação pessoal declarada pelo usuário, não o da conferência). A página só afirma confirmação pessoal quando `confirmation_recorded_at` está preenchido.
+- `ENEM_M2_DATA_ROOT`: data_root da ingestão (`<data_root>/ingestion.db` e `raw/resources/<sha256>/payload`).
+
+```bash
+npm run build
+ENEM_M2_QUESTION_PATH=$HOME/.local/share/enem-rei/m2/curation/enem-2024-d1-cd1-q10.json \
+ENEM_M2_DATA_ROOT=$HOME/.local/share/enem-rei/m2/data_root \
+npm run start
+```
+
+Abra http://127.0.0.1:3000/questao. Sem as variáveis, a página informa que a questão não está configurada. A cada requisição o servidor abre o SQLite somente leitura e confere, para cada recurso referenciado: `source_resource` com o mesmo SHA-256 e `resource_id`, `storage_locator = raw/resources/<sha256>/payload`, aquisição registrada com a URL referenciada e SHA-256/tamanho recalculados do payload. Falha em recurso do caderno mostra erro de proveniência (a questão não é exibida); falha só no gabarito mostra a questão com "gabarito não verificado" e sem correção. Respostas ficam apenas na memória da página. Testes usam somente dados sintéticos gerados por `apps/web/tests/e2e/support/build_m2_fixture.py` (que chama `ingest_local_file`).
+
 ## Política de dados
 
 [data/README.md](data/README.md): raw é imutável. Nunca alterar originais; correções geram novas versões. Toda ingestão futura deve preservar manifesto, hash e lineage. Não versionar datasets grandes, bancos locais ou credenciais. Nenhum dataset foi baixado; ainda não existe ingestão ou mecanismo executável de proteção de raw.

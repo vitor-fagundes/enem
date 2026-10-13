@@ -78,3 +78,23 @@ ESLint 10 foi testado e falhou por incompatibilidade do plugin React; 9.39.5 foi
 ## Arquivos existentes
 
 As duas specs existentes foram preservadas sem alteração. Nenhum arquivo existente foi removido. Não foi criado commit.
+
+## M2 — primeira questão interativa
+
+Escopo: [m2-primeira-questao.md](m2-primeira-questao.md). Execução em Node 24.21.0 Linux, Chromium do Playwright em `~/.cache/ms-playwright` (sem bibliotecas de sistema faltantes neste ambiente).
+
+| Comando                                 | Resultado                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `npm run lint`                          | Passou.                                                                                                       |
+| `npm run format:check`                  | Falha preexistente apenas em 28 arquivos de `.agents/`, `.claude/skills/` e `.specify/`, não alterados no M2. |
+| `npm run typecheck`                     | Passou.                                                                                                       |
+| `npm test`                              | 3 arquivos, 40 testes Vitest passaram (correção, validação estrutural, proveniência com SQLite sintético).    |
+| `npm run build`                         | Passou sem dados reais; `/questao` dinâmica (ƒ).                                                              |
+| `npm run test:e2e`                      | 8 testes passaram (home + 7 do M2 com data_root sintético nas portas 3100/3101).                              |
+| `uv run --frozen ruff check .`          | Passou.                                                                                                       |
+| `uv run --frozen ruff format --check .` | Passou.                                                                                                       |
+| `uv run --frozen pytest -q`             | 268 testes passaram.                                                                                          |
+
+Verificação com dados reais (fora do Git): `GET /questao` retornou 200 com enunciado, cinco alternativas, os dois SHA-256 e as páginas físicas, sem erro de proveniência; seleção da alternativa do gabarito mostrou "Correto" e outra alternativa "Incorreto"; recarregar descartou a resposta. O `ingestion.db` e os payloads não foram alterados.
+
+Proveniência da transcrição real: rascunho por leitura visual assistida por LLM (Claude Code) dos PDFs oficiais, conferido por comparação visual de capturas da prova e do gabarito em conversa com o ChatGPT e, depois, confirmado pessoalmente pelo usuário vitor-fagundes contra o material oficial (texto-base, enunciado, alternativas A–E e gabarito), conforme declaração dele em conversa. O horário dessa conferência pessoal não é conhecido (`verified_at = null`); `confirmation_recorded_at` guarda apenas o horário em que a confirmação foi registrada. A página exibe o rótulo "Transcrição assistida por LLM, conferida visualmente e confirmada pessoalmente pelo usuário" quando há confirmação registrada (sem ela, mantém o rótulo "não verificada pessoalmente pelo usuário"). A pendência anterior dos critérios 5 e 7 de `docs/m2-primeira-questao.md` (transcrição conferida pelo usuário) foi resolvida por essa confirmação declarada pelo usuário; o arquivo anterior foi preservado como backup fora do Git.

@@ -17,6 +17,12 @@ Para o M3 (docs/m3-catalogo-questoes.md) grava também:
 - `catalog-compromised/`: as mesmas três posições, mas a 12 usa um gabarito
   sintético adulterado e a 30 um caderno sintético adulterado (payloads
   alterados após a ingestão), para testar falhas de proveniência isoladas.
+
+Para o M4 (docs/m4-registro-tentativas.md) grava `catalog-m4/`, com áreas
+oficiais e não mapeadas: 7 (LC, gabarito A), 12 (MT, C), 20 (CH, anulada),
+25 (CN, gabarito adulterado: não verificado), 30 (área fictícia, E),
+35 (caderno adulterado: bloqueada) e 45 (área fictícia, B; reservada ao teste
+de questão alterada entre exibição e envio).
 """
 
 import hashlib
@@ -191,7 +197,7 @@ def tamper(data_root: Path, sha256: str) -> None:
 
 def build_compromised_catalog(
     directory: Path, data_root: Path, inputs: Path, booklet: dict, key: dict
-) -> None:
+) -> tuple[dict, dict]:
     booklet_b_file = inputs / "caderno-b-ficticio.pdf"
     booklet_b_file.write_bytes(b"%PDF-sintetico caderno B ficticio enem-rei m3\n")
     key_b_file = inputs / "gabarito-b-ficticio.pdf"
@@ -206,6 +212,13 @@ def build_compromised_catalog(
         "source_url": BOOKLET_B_URL,
     }
     key_b = {"resource_id": key_b_id, "sha256": key_b_sha, "source_url": KEY_B_URL}
+    build_compromised_entries(directory, booklet, key, booklet_b, key_b)
+    return booklet_b, key_b
+
+
+def build_compromised_entries(
+    directory: Path, booklet: dict, key: dict, booklet_b: dict, key_b: dict
+) -> None:
     directory.mkdir()
     sources = {7: (booklet, key), 12: (booklet, key_b), 30: (booklet_b, key)}
     for number, area, letter in CATALOG_QUESTIONS:
@@ -214,6 +227,30 @@ def build_compromised_catalog(
             directory / f"{catalog_id(number)}.json",
             catalog_question(source_booklet, source_key, number, area, letter),
         )
+
+
+LC = "Linguagens, Códigos e suas Tecnologias"
+CH = "Ciências Humanas e suas Tecnologias"
+CN = "Ciências da Natureza e suas Tecnologias"
+MT = "Matemática e suas Tecnologias"
+
+
+def build_m4_catalog(
+    directory: Path, booklet: dict, key: dict, booklet_b: dict, key_b: dict
+) -> None:
+    directory.mkdir()
+    entries = {
+        7: catalog_question(booklet, key, 7, LC, "A"),
+        12: catalog_question(booklet, key, 12, MT, "C"),
+        20: catalog_question(booklet, key, 20, CH, "A"),
+        25: catalog_question(booklet, key_b, 25, CN, "D"),
+        30: catalog_question(booklet, key, 30, "Área Fictícia Três", "E"),
+        35: catalog_question(booklet_b, key, 35, "Área Fictícia Bloqueada", "A"),
+        45: catalog_question(booklet, key, 45, "Área Fictícia Alterável", "B"),
+    }
+    entries[20]["answer_key"] = {"published_value": None, "status": "ANNULLED"}
+    for number, data in entries.items():
+        write_json(directory / f"{catalog_id(number)}.json", data)
 
 
 def main(out: Path) -> None:
@@ -246,9 +283,10 @@ def main(out: Path) -> None:
     ]:
         (out / name).write_text(json.dumps(data, ensure_ascii=False, indent=2))
     build_catalog(out / "catalog", booklet, key)
-    build_compromised_catalog(
+    booklet_b, key_b = build_compromised_catalog(
         out / "catalog-compromised", data_root, inputs, booklet, key
     )
+    build_m4_catalog(out / "catalog-m4", booklet, key, booklet_b, key_b)
 
 
 if __name__ == "__main__":

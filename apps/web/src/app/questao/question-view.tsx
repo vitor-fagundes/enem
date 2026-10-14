@@ -9,7 +9,8 @@ import { AnswerForm } from "./answer-form";
 
 /**
  * Corpo da questão e bloco de proveniência compartilhados por /questao (M2) e
- * /questoes/[id] (M3).
+ * /questoes/[id] (M3/M4). Componente de servidor: o gabarito recebido aqui só
+ * chega ao navegador pelo `AnswerForm` do M2.
  */
 export function Checks({ checks }: { checks: ResourceCheck[] }) {
   return (
@@ -112,12 +113,19 @@ export function QuestionView({
   question,
   verifiedAnswerKey,
   formKey,
+  form,
   children,
 }: {
   question: CuratedQuestion;
+  /** Usado no servidor para o aviso e, sem `form`, pelo formulário do M2. */
   verifiedAnswerKey: AnswerKey | null;
   /** Chave do formulário: trocar de questão descarta a resposta. */
   formKey?: string;
+  /**
+   * Formulário que substitui o `AnswerForm` do M2 (que recebe o gabarito no
+   * navegador). O catálogo (M4) passa um formulário sem gabarito.
+   */
+  form?: ReactNode;
   /** Conteúdo exibido entre o formulário e o bloco de fonte. */
   children?: ReactNode;
 }) {
@@ -148,11 +156,13 @@ export function QuestionView({
         </p>
         <p className="font-medium">{question.content.statement}</p>
       </article>
-      <AnswerForm
-        key={formKey}
-        alternatives={question.content.alternatives}
-        answerKey={verifiedAnswerKey}
-      />
+      {form ?? (
+        <AnswerForm
+          key={formKey}
+          alternatives={question.content.alternatives}
+          answerKey={verifiedAnswerKey}
+        />
+      )}
       {children}
       <SourceBlock question={question} />
     </>

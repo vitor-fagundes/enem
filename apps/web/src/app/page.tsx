@@ -21,6 +21,11 @@ export default function Home() {
           Catálogo de questões (M3)
         </Link>
       </p>
+      <p className="mt-2">
+        <Link className="underline" href="/desempenho">
+          Desempenho (M4)
+        </Link>
+      </p>
     </main>
   );
 }

@@ -4,6 +4,7 @@
  * com as mesmas funções do M2 (ADR-0002): cada recurso distinto é verificado
  * uma única vez por chamada, sem cache entre requisições.
  */
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -33,6 +34,8 @@ export type SourceState = "VERIFIED" | "KEY_UNVERIFIED" | "BLOCKED";
 export interface CatalogEntry {
   id: string;
   fileName: string;
+  /** SHA-256 dos bytes do arquivo curado lido nesta chamada (versão da questão). */
+  fileSha256: string;
   question: CuratedQuestion;
   source: SourceState;
   /** `null` quando o gabarito não foi verificado ou a questão está bloqueada. */
@@ -45,25 +48,33 @@ export type CatalogLoadResult =
   | { status: "CATALOG_UNREADABLE"; error: string }
   | { status: "READY"; entries: CatalogEntry[]; warnings: CatalogWarning[] };
 
-/** Lê somente arquivos regulares `*.json` (sem seguir links simbólicos). */
-export async function readCatalogFiles(
-  catalogDir: string,
-): Promise<{ files: CatalogFile[]; warnings: CatalogWarning[] }> {
+/**
+ * Lê somente arquivos regulares `*.json` (sem seguir links simbólicos) e
+ * calcula o SHA-256 dos bytes lidos de cada um.
+ */
+export async function readCatalogFiles(catalogDir: string): Promise<{
+  files: CatalogFile[];
+  sha256ByFile: Map<string, string>;
+  warnings: CatalogWarning[];
+}> {
   const dirents = await readdir(catalogDir, { withFileTypes: true });
   const files: CatalogFile[] = [];
+  const sha256ByFile = new Map<string, string>();
   const warnings: CatalogWarning[] = [];
   for (const dirent of dirents) {
     if (!dirent.isFile() || !isCatalogFileName(dirent.name)) continue;
     try {
-      files.push({
-        fileName: dirent.name,
-        content: await readFile(join(catalogDir, dirent.name), "utf8"),
-      });
+      const bytes = await readFile(join(catalogDir, dirent.name));
+      files.push({ fileName: dirent.name, content: bytes.toString("utf8") });
+      sha256ByFile.set(
+        dirent.name,
+        createHash("sha256").update(bytes).digest("hex"),
+      );
     } catch {
       warnings.push({ fileName: dirent.name, reasons: ["arquivo ilegível"] });
     }
   }
-  return { files, warnings };
+  return { files, sha256ByFile, warnings };
 }
 
 export async function loadCatalog(
@@ -98,6 +109,7 @@ export async function loadCatalog(
     );
     return {
       ...candidate,
+      fileSha256: read.sha256ByFile.get(candidate.fileName)!,
       checks,
       source: assessment.blocked
         ? "BLOCKED"

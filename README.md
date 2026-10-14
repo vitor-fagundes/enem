@@ -4,7 +4,7 @@ Ferramenta pessoal de apoio à decisão para preparação intensiva para o ENEM.
 
 ## Estado e princípios
 
-Esta entrega contém somente a fundação técnica e uma página estática de identificação. Não há cadastro de questões, sessão, métricas, recomendações ou dashboard implementados. Os critérios de aceite funcionais das specs permanecem pendentes.
+Esta entrega contém a fundação técnica, a questão interativa do M2 (`/questao`), o catálogo de questões reais verificadas do M3 (`/questoes`) e o registro de tentativas com indicadores simples de desempenho do M4 (`/desempenho`: total, acertos, erros, não corrigidas, taxa de acerto e divisão por área). Não há sessão de estudo, domínio/mastery, diagnóstico de erros, recomendações ou dashboard completo. Os demais critérios de aceite funcionais das specs permanecem pendentes.
 
 Questões antes de teoria; evidência antes de intuição; fontes oficiais prioritárias; cálculos determinísticos; proveniência; regras separadas da UI; simplicidade e estudo antes de sofisticação técnica. LLM não é fonte de verdade nem necessária para o fluxo principal futuro.
 
@@ -104,6 +104,37 @@ npm run start
 Abra http://127.0.0.1:3000/questoes. Sem as duas variáveis, a página informa que o catálogo não está configurado. Regras de entrada: JSON válido pelo domínio do M2, contexto de numeração `COMMON`, confirmação humana registrada (`extraction.confirmation_recorded_at`) e nome do arquivo igual a `<id>.json`, com `id = enem-<ano>-d<dia>-cd<caderno>-q<N>`. JSON malformado, estrutura inválida, outro contexto, falta de confirmação, nome divergente ou posição duplicada (todas as entradas conflitantes) ficam fora do catálogo e aparecem em "Arquivos fora do catálogo". A lista segue a ordem numérica; `/questoes/<id>` reutiliza o corpo, o formulário e o bloco de fonte do M2, com anterior/próxima (a resposta é descartada ao navegar). ID inexistente ou excluído responde 404.
 
 A cada requisição, cada recurso distinto referenciado pelas questões é verificado uma única vez (mesmas conferências do M2, SQLite aberto uma vez, somente leitura), sem cache entre requisições. Falha no caderno marca apenas as questões dependentes como "Erro de proveniência: questão indisponível" (sem link; a página mostra o erro e não a questão; a navegação a pula); falha só no gabarito exibe a questão com "Gabarito não verificado" e sem correção. Testes usam o catálogo sintético gerado por `build_m2_fixture.py` (diretórios `catalog/` e `catalog-compromised/`), servido nas portas 3100/3101 do Playwright.
+
+## M4 — registro de tentativas e desempenho (`/desempenho`)
+
+Escopo e aceitação em [docs/m4-registro-tentativas.md](docs/m4-registro-tentativas.md); decisão em [ADR-0003](docs/adr/0003-web-attempts-sqlite.md). Cada resposta confirmada em `/questoes/<id>` é corrigida **no servidor** (Server Action, `evaluateAnswer` com o gabarito verificado pela proveniência do M3, refeita a cada envio) e gravada em um SQLite operacional próprio, separado do `ingestion.db`:
+
+- `ENEM_ATTEMPTS_DB`: arquivo SQLite de tentativas, **fora do Git** (sugestão: `apps/web/.local/attempts.sqlite`, já ignorado). O diretório pai deve existir; o arquivo e o esquema (`PRAGMA user_version = 1`) são criados no primeiro registro. O caminho é recusado se for o `ingestion.db` de `ENEM_DATA_ROOT`/`ENEM_M2_DATA_ROOT` ou ficar dentro de `raw/` desses data roots ou de `data/raw`.
+
+```bash
+npm run build
+R=$HOME/.local/share/enem-rei/m2
+mkdir -p $HOME/.local/share/enem-rei/m4
+ENEM_CATALOG_DIR=$R/curation ENEM_DATA_ROOT=$R/data_root \
+ENEM_M2_QUESTION_PATH=$R/curation/enem-2024-d1-cd1-q10.json ENEM_M2_DATA_ROOT=$R/data_root \
+ENEM_ATTEMPTS_DB=$HOME/.local/share/enem-rei/m4/attempts.sqlite \
+npm run start
+```
+
+Abra http://127.0.0.1:3000/questoes, responda e consulte http://127.0.0.1:3000/desempenho. Regras principais:
+
+- O navegador envia só `submission_id` (UUID v4, um por formulário), `question_id`, `question_file_sha256` (SHA-256 do arquivo curado exibido), a alternativa e `duration_ms` (estimativa via `performance.now()`, inteiro de 0 a 86 400 000). Resultado, gabarito, área e horário são determinados pelo servidor; o gabarito não é enviado à página do catálogo e só volta na resposta do registro, para `CORRECT`/`INCORRECT`.
+- São rejeitados sem gravar: envio malformado, questão inexistente ou bloqueada, arquivo da questão alterado desde a exibição, banco não configurado ou recusado. Sem `ENEM_ATTEMPTS_DB`, a confirmação mostra "Registro de tentativas não configurado" e nenhum resultado.
+- Uma linha imutável por tentativa (gatilhos impedem `UPDATE`/`DELETE`); responder de novo (recarregar, navegar ou "Responder novamente") cria outra linha. Reenvio do mesmo `submission_id` com o mesmo conteúdo não duplica; com conteúdo diferente é rejeitado.
+- `NOT_VERIFIED` (gabarito não verificado) e `ANNULLED` são gravados, mas não contam como acerto nem erro. `/desempenho` lê o banco somente leitura e mostra total, acertos, erros, não corrigidas, taxa de acerto = acertos/(acertos + erros) ("sem dados" com denominador 0), divisão por área (`LC`, `CH`, `CN`, `MT` por nome oficial exato; demais textos como "área não mapeada") e a lista das tentativas (mais recente primeiro). A taxa não representa domínio.
+- `/questao` (M2) continua sem persistência.
+
+Bancos de tentativas locais (fora do Git, em `~/.local/share/enem-rei/m4/`), com papéis separados:
+
+- `attempts.sqlite`: banco de **validação** do M4, com as tentativas de teste feitas na verificação manual. Preservado como registro dessa validação; não usar para estudo nem alterar.
+- `attempts-study.sqlite`: banco pessoal de **estudos**, o histórico real. É o `ENEM_ATTEMPTS_DB` do servidor local de uso diário; começa vazio (o arquivo é criado na primeira resposta confirmada) e não recebe cópia das tentativas de validação.
+
+Para estudar, inicie o servidor com `ENEM_ATTEMPTS_DB=$HOME/.local/share/enem-rei/m4/attempts-study.sqlite` (em vez do caminho de exemplo acima). O banco de tentativas não tem backup automático: apagar o arquivo apaga o histórico. Para consultá-lo sem alterar: `sqlite3 -readonly "$ENEM_ATTEMPTS_DB" 'SELECT * FROM attempt'`. Os e2e do M4 usam o catálogo sintético `catalog-m4/` e bancos de tentativas temporários por servidor e por execução (3102 com banco; 3103 sem `ENEM_ATTEMPTS_DB`).
 
 ## Política de dados
 

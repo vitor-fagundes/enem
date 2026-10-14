@@ -6,6 +6,7 @@ import { neighbors } from "../../../domain/catalog";
 import { loadCatalog, navigableEntries } from "../../../lib/m3/catalog";
 import { Checks, QuestionView } from "../../questao/question-view";
 import { CatalogUnavailable } from "../catalog-status";
+import { AttemptForm } from "./attempt-form";
 
 export const metadata: Metadata = { title: "Questão — enem-rei" };
 
@@ -61,7 +62,15 @@ export default async function CatalogQuestionPage({
       <QuestionView
         question={entry.question}
         verifiedAnswerKey={entry.verifiedAnswerKey}
-        formKey={entry.id}
+        form={
+          // Sem gabarito: a correção ocorre no servidor, junto do registro (M4).
+          <AttemptForm
+            key={entry.id}
+            alternatives={entry.question.content.alternatives}
+            questionId={entry.id}
+            questionFileSha256={entry.fileSha256}
+          />
+        }
       >
         <nav
           aria-label="Navegação entre questões"
